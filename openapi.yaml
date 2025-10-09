@@ -1,4 +1,4 @@
-openapi: 3.2.0
+openapi: 3.1.0
 info:
   title: RailForLess API
   description: The API that powers RailForless.US!
