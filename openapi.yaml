@@ -6,33 +6,33 @@ info:
 
 servers:
   - url: https://api.railforless.us
-    description: Production endpoint
+    description: Production
 
 paths:
   /fares:
     get:
-      summary: Search for train fares
-      description: Fetches available train fares based on origin, destination, and date range.
+      summary: Search for Amtrak fares
+      description: Fetches available Amtrak fares based on origin, destination, and date range.
       operationId: searchFares
       parameters:
         - name: origin
           in: query
           required: true
-          description: The starting station code (e.g., NYP for New York Penn Station).
+          description: The starting station code.
           schema:
             type: string
             example: "NYP"
         - name: destination
           in: query
           required: true
-          description: The destination station code (e.g., MTR for Montreal).
+          description: The destination station code.
           schema:
             type: string
             example: "MTR"
         - name: startDate
           in: query
           required: true
-          description: The earliest departure date for the search.
+          description: The earliest departure date for the search, inclusive.
           schema:
             type: string
             format: date
@@ -40,7 +40,7 @@ paths:
         - name: endDate
           in: query
           required: true
-          description: The latest departure date for the search.
+          description: The latest departure date for the search, inclusive.
           schema:
             type: string
             format: date
@@ -48,21 +48,28 @@ paths:
         - name: accessible
           in: query
           required: false
-          description: Filter for fares that include accessible seating or accommodations.
+          description: Whether to ONLY include accessible fares. This will override the bedroom and family options.
           schema:
             type: boolean
             example: true
         - name: roundTrip
           in: query
           required: false
-          description: Specify if the search is for a round trip.
+          description: Specify if the search should include the opposite direction as well.
           schema:
             type: boolean
             example: true
         - name: bedrooms
           in: query
           required: false
-          description: Filter for fares that include sleeper car bedroom options.
+          description: Specify if bedroom accommodations should be included in the search results. This will increase API response time by 100% or more.
+          schema:
+            type: boolean
+            example: true
+        - name: familyRooms
+          in: query
+          required: false
+          description: Specify if family room accommodations should be included in the search results. This will increase API response time by 100% or more.
           schema:
             type: boolean
             example: true
@@ -185,39 +192,96 @@ paths:
                                 addItems:
                                   type: array
                                   items: {}
-              example:
-                - departureDate: "2025-10-12T07:15:00"
-                  origin: "NYP"
-                  destination: "MTR"
-                  options:
-                    - departureDateTime: "2025-10-12T07:15:00"
-                      arrivalDateTime: "2025-10-12T20:16:00"
-                      elapsedSeconds: 46860
-                      accommodations:
-                        - class: "Coach"
-                          fareFamily: "VLU"
-                          legAccommodations:
-                            - - fare:
-                                  accommodation: 0
-                                  rail: 112
-                                  total: 112
-                                availableInventory: 43
-                                rbd: "YB"
-                                name: "Coach Seat"
-                                roomType: "Other"
-                                isAdditionalProduct: false
-                      travelLegs:
-                        - trainId: "69"
-                          route: "Adirondack"
-                          origin: "NYP"
-                          departureDateTime: "2025-10-12T07:15:00"
-                          destination: "MTR"
+              examples:
+                successful_search:
+                  summary: "Successful fare search"
+                  description: "Example response when results are found"
+                  value:
+                    - departureDate: "2025-10-12T07:15:00"
+                      origin: "NYP"
+                      destination: "MTR"
+                      options:
+                        - departureDateTime: "2025-10-12T07:15:00"
                           arrivalDateTime: "2025-10-12T20:16:00"
                           elapsedSeconds: 46860
-                          type: "TRAIN"
-                          isBorderCross: true
-                          isSelfTransfer: false
-                          amenities: ["Cafe", "Free WiFi"]
-                          addItems: []
+                          accommodations:
+                            - class: "Coach"
+                              fareFamily: "VLU"
+                              legAccommodations:
+                                - - fare:
+                                      accommodation: 0
+                                      rail: 112
+                                      total: 112
+                                    availableInventory: 43
+                                    rbd: "YB"
+                                    name: "Coach Seat"
+                                    roomType: "Other"
+                                    isAdditionalProduct: false
+                          travelLegs:
+                            - trainId: "69"
+                              route: "Adirondack"
+                              origin: "NYP"
+                              departureDateTime: "2025-10-12T07:15:00"
+                              destination: "MTR"
+                              arrivalDateTime: "2025-10-12T20:16:00"
+                              elapsedSeconds: 46860
+                              type: "TRAIN"
+                              isBorderCross: true
+                              isSelfTransfer: false
+                              amenities: ["Cafe", "Free WiFi"]
+                              addItems: []
+                amtrak_error:
+                  summary: "Amtrak error response"
+                  description: "Example response when Amtrak cannot complete the search, such as when a route is sold out"
+                  value:
+                    error:
+                      message: "SOLD OUT"
         '400':
-          description: Bad Request - The request was invalid or cannot be served. Check the query parameters.
+          description: Bad Request - The request parameters were invalid.
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  type: object
+                  properties:
+                    code:
+                      type: string
+                      description: Error code identifying the type of validation error
+                    message:
+                      type: string
+                      description: Human-readable error message
+                    path:
+                      type: array
+                      items:
+                        type: string
+                      description: Array indicating which field(s) caused the error
+                  required:
+                    - code
+                    - message
+                    - path
+              example:
+                - code: "custom"
+                  message: "Invalid origin"
+                  path:
+                    - "origin"
+        '500':
+          description: Internal Server Error - An unexpected error occurred on the server.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  error:
+                    type: object
+                    properties:
+                      message:
+                        type: string
+                        description: Description of the internal server error
+                    required:
+                      - message
+                required:
+                  - error
+              example:
+                error:
+                  message: "Example Unrecoverable Error"
