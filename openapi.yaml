@@ -8,6 +8,17 @@ servers:
   - url: https://api.railforless.us
     description: Production
 
+components:
+  securitySchemes:
+    ApiKeyAuth:
+      type: apiKey
+      in: header
+      name: x-api-key
+      description: API key required for authentication. Email info@railforless.us to obtain an API key.
+
+security:
+  - ApiKeyAuth: []
+
 paths:
   /fares:
     get:
