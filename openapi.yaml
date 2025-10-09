@@ -1,4 +1,4 @@
-openapi: 3.0.3
+openapi: 3.2.0
 info:
   title: RailForLess API
   description: The API that powers RailForless.US!
@@ -55,7 +55,7 @@ paths:
         - name: roundTrip
           in: query
           required: false
-          description: Specify if the search is for a round trip. (Note: This may affect fare calculation logic).
+          description: Specify if the search is for a round trip.
           schema:
             type: boolean
             example: true
