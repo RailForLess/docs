@@ -1,0 +1,223 @@
+openapi: 3.0.3
+info:
+  title: RailForLess API
+  description: The API that powers RailForless.US!
+  version: 1.0.0
+
+servers:
+  - url: https://api.railforless.us
+    description: Production endpoint
+
+paths:
+  /fares:
+    get:
+      summary: Search for train fares
+      description: Fetches available train fares based on origin, destination, and date range.
+      operationId: searchFares
+      parameters:
+        - name: origin
+          in: query
+          required: true
+          description: The starting station code (e.g., NYP for New York Penn Station).
+          schema:
+            type: string
+            example: "NYP"
+        - name: destination
+          in: query
+          required: true
+          description: The destination station code (e.g., MTR for Montreal).
+          schema:
+            type: string
+            example: "MTR"
+        - name: startDate
+          in: query
+          required: true
+          description: The earliest departure date for the search.
+          schema:
+            type: string
+            format: date
+            example: "2025-10-11"
+        - name: endDate
+          in: query
+          required: true
+          description: The latest departure date for the search.
+          schema:
+            type: string
+            format: date
+            example: "2025-10-20"
+        - name: accessible
+          in: query
+          required: false
+          description: Filter for fares that include accessible seating or accommodations.
+          schema:
+            type: boolean
+            example: true
+        - name: roundTrip
+          in: query
+          required: false
+          description: Specify if the search is for a round trip. (Note: This may affect fare calculation logic).
+          schema:
+            type: boolean
+            example: true
+        - name: bedrooms
+          in: query
+          required: false
+          description: Filter for fares that include sleeper car bedroom options.
+          schema:
+            type: boolean
+            example: true
+      responses:
+        '200':
+          description: Successful response with a list of available fares.
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  type: object
+                  properties:
+                    departureDate:
+                      type: string
+                      format: date-time
+                      description: The specific date of this departure option.
+                    origin:
+                      type: string
+                      description: The origin station code for this leg of the journey.
+                    destination:
+                      type: string
+                      description: The destination station code for this leg of the journey.
+                    options:
+                      type: array
+                      items:
+                        type: object
+                        properties:
+                          departureDateTime:
+                            type: string
+                            format: date-time
+                          arrivalDateTime:
+                            type: string
+                            format: date-time
+                          elapsedSeconds:
+                            type: integer
+                            description: Total travel time in seconds.
+                          accommodations:
+                            type: array
+                            items:
+                              type: object
+                              properties:
+                                class:
+                                  type: string
+                                  example: "Coach"
+                                fareFamily:
+                                  type: string
+                                  example: "VLU"
+                                legAccommodations:
+                                  type: array
+                                  description: A nested array representing accommodations per leg.
+                                  items:
+                                    type: array
+                                    items:
+                                      type: object
+                                      properties:
+                                        fare:
+                                          type: object
+                                          properties:
+                                            accommodation:
+                                              type: number
+                                              format: float
+                                            rail:
+                                              type: number
+                                              format: float
+                                            total:
+                                              type: number
+                                              format: float
+                                        availableInventory:
+                                          type: integer
+                                        rbd:
+                                          type: string
+                                          description: Reservation Booking Designator.
+                                          example: "YB"
+                                        name:
+                                          type: string
+                                          example: "Coach Seat"
+                                        roomType:
+                                          type: string
+                                          example: "Other"
+                                        isAdditionalProduct:
+                                          type: boolean
+                          travelLegs:
+                            type: array
+                            items:
+                              type: object
+                              properties:
+                                trainId:
+                                  type: string
+                                  example: "69"
+                                route:
+                                  type: string
+                                  example: "Adirondack"
+                                origin:
+                                  type: string
+                                  example: "NYP"
+                                departureDateTime:
+                                  type: string
+                                  format: date-time
+                                destination:
+                                  type: string
+                                  example: "MTR"
+                                arrivalDateTime:
+                                  type: string
+                                  format: date-time
+                                elapsedSeconds:
+                                  type: integer
+                                type:
+                                  type: string
+                                  example: "TRAIN"
+                                isBorderCross:
+                                  type: boolean
+                                isSelfTransfer:
+                                  type: boolean
+                                amenities:
+                                  type: array
+                                  items:
+                                    type: string
+                                  example: ["Cafe", "Free WiFi"]
+                                addItems:
+                                  type: array
+                                  items: {}
+              example:
+                - departureDate: "2025-10-12T07:15:00"
+                  origin: "NYP"
+                  destination: "MTR"
+                  options:
+                    - departureDateTime: "2025-10-12T07:15:00"
+                      arrivalDateTime: "2025-10-12T20:16:00"
+                      elapsedSeconds: 46860
+                      accommodations:
+                        - class: "Coach"
+                          fareFamily: "VLU"
+                          legAccommodations:
+                            - - fare:
+                                  accommodation: 0
+                                  rail: 112
+                                  total: 112
+                                availableInventory: 43
+                                rbd: "YB"
+                                name: "Coach Seat"
+                                roomType: "Other"
+                                isAdditionalProduct: false
+                      travelLegs:
+                        - trainId: "69"
+                          route: "Adirondack"
+                          origin: "NYP"
+                          departureDateTime: "2025-10-12T07:15:00"
+                          destination: "MTR"
+                          arrivalDateTime: "2025-10-12T20:16:00"
+                          elapsedSeconds: 46860
+                          type: "TRAIN"
+                          isBorderCross: true
+                          isSelfTransfer: false
+                          amenities: ["Cafe", "Free WiFi"]
+                          addItems: []
+        '400':
+          description: Bad Request - The request was invalid or cannot be served. Check the query parameters.
