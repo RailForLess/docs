@@ -6,21 +6,10 @@ info:
 
 servers:
   - url: https://api.railforless.us
-    description: Production
-
-components:
-  securitySchemes:
-    ApiKeyAuth:
-      type: apiKey
-      in: header
-      name: x-api-key
-      description: API key required for authentication. Email info@railforless.us to obtain an API key.
-
-security:
-  - ApiKeyAuth: []
+    description: Production endpoint
 
 paths:
-  /fares:
+  /v1/fares:
     get:
       summary: Search for Amtrak fares
       description: Fetches available Amtrak fares based on origin, destination, and date range.
@@ -296,3 +285,528 @@ paths:
               example:
                 error:
                   message: "Example Unrecoverable Error"
+
+  /v1/subscriptions:
+    description: All subscription endpoints require the `x-api-key` header and are rate-limited per API key.
+    post:
+      summary: Create a webhook subscription group
+      description: Creates a subscription group owned by the calling API key. On creation, the date range is fanned out into one per-day subscription row (maximum 31 days). The `webhook_secret` is returned once and must be stored for webhook signature verification.
+      operationId: createSubscriptionGroup
+      security:
+        - API Key Auth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/SubscriptionGroupCreateRequest'
+            example:
+              origin: MSP
+              destination: SEA
+              accommodation: roomette
+              price_threshold: 500
+              start_date: '2026-05-15'
+              end_date: '2026-05-21'
+              webhook_url: https://example.com/hook
+      responses:
+        '201':
+          description: Subscription group created.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/CreateSubscriptionGroupResponse'
+              example:
+                id: 85d9d93a-b6ad-44ca-9519-59c55f8c2496
+                webhook_secret: 4b68ab3847feda7d6c62c1fbcbeebfa35eab7351ed5e78f4ddadea5df64b8015
+                subscriptions: 7
+        '400':
+          $ref: '#/components/responses/BadRequestError'
+        '401':
+          $ref: '#/components/responses/UnauthorizedError'
+        '429':
+          $ref: '#/components/responses/RateLimitError'
+
+    get:
+      summary: List webhook subscription groups
+      description: Returns every subscription group owned by the calling API key, including all fanned-out per-day subscriptions.
+      operationId: listSubscriptionGroups
+      security:
+        - API Key Auth: []
+      responses:
+        '200':
+          description: List of subscription groups for the authenticated API key.
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/SubscriptionGroup'
+              example:
+                - id: 85d9d93a-b6ad-44ca-9519-59c55f8c2496
+                  webhook_url: https://example.com/hook
+                  created_at: '2026-04-21T12:00:00.000Z'
+                  subscriptions:
+                    - id: 0398df6f-af27-4b1b-8f7f-a2bc56f039f3
+                      group_id: 85d9d93a-b6ad-44ca-9519-59c55f8c2496
+                      origin: MSP
+                      destination: SEA
+                      departure_date: '2026-05-15'
+                      accommodation: roomette
+                      price_threshold: 500
+                      last_notified_price: null
+                      last_checked_at: '2026-04-21T12:15:00.000Z'
+                      created_at: '2026-04-21T12:00:00.000Z'
+        '401':
+          $ref: '#/components/responses/UnauthorizedError'
+
+  /v1/subscriptions/{groupId}:
+    description: All subscription endpoints require the `x-api-key` header and are rate-limited per API key.
+    patch:
+      summary: Update a webhook subscription group
+      description: Updates a subscription group owned by the calling API key. Any create-body field can be included. If any trip field (`origin`, `destination`, `accommodation`, `price_threshold`, `start_date`, `end_date`) is present, the full subscription set is replaced using merged values. `webhook_url` updates in place.
+      operationId: updateSubscriptionGroup
+      security:
+        - API Key Auth: []
+      parameters:
+        - name: groupId
+          in: path
+          required: true
+          description: Subscription group ID.
+          schema:
+            type: string
+            format: uuid
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/SubscriptionGroupUpdateRequest'
+            example:
+              price_threshold: 450
+              webhook_url: https://example.com/new-hook
+      responses:
+        '200':
+          description: Subscription group updated.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/UpdateSubscriptionGroupResponse'
+              example:
+                id: 85d9d93a-b6ad-44ca-9519-59c55f8c2496
+                updated: true
+        '400':
+          $ref: '#/components/responses/BadRequestError'
+        '401':
+          $ref: '#/components/responses/UnauthorizedError'
+        '404':
+          $ref: '#/components/responses/NotFoundError'
+
+    delete:
+      summary: Delete a webhook subscription group
+      description: Deletes a subscription group and all of its per-day subscriptions. The provided API key must own the group.
+      operationId: deleteSubscriptionGroup
+      security:
+        - API Key Auth: []
+      parameters:
+        - name: groupId
+          in: path
+          required: true
+          description: Subscription group ID.
+          schema:
+            type: string
+            format: uuid
+      responses:
+        '200':
+          description: Subscription group deleted.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/DeleteSubscriptionGroupResponse'
+              example:
+                deleted: true
+        '401':
+          $ref: '#/components/responses/UnauthorizedError'
+        '404':
+          $ref: '#/components/responses/NotFoundError'
+
+webhooks:
+  price_drop:
+    post:
+      summary: Price drop notification delivery
+      description: |
+        Sent by RailForLess to the subscriber `webhook_url` when one or more prices drop.
+
+        Signature verification:
+        - Compute expected signature as `sha256=<hex(hmac_sha256(webhook_secret, X-RFL-Timestamp + "." + raw_body))>`.
+        - Compare expected and provided signatures using a constant-time comparison.
+        - Reject as replay if the timestamp differs from current unix time by more than 300 seconds.
+
+        Delivery semantics:
+        - Any 2xx response acknowledges delivery.
+        - Non-2xx responses are retried with bounded attempts.
+        - Multiple matches may be batched in one delivery per group per cycle.
+        - Delivery cycles run every 15 minutes (frequent tier) and daily at 01:00 UTC (daily tier).
+      operationId: receivePriceDropWebhook
+      parameters:
+        - name: User-Agent
+          in: header
+          required: true
+          schema:
+            type: string
+            example: RailForLess-Webhook/1.0
+        - name: X-RFL-Timestamp
+          in: header
+          required: true
+          description: Unix timestamp in seconds.
+          schema:
+            type: integer
+            format: int64
+            example: 1745251200
+        - name: X-RFL-Signature
+          in: header
+          required: true
+          description: HMAC-SHA256 signature in the format `sha256=<hex>`.
+          schema:
+            type: string
+            pattern: '^sha256=[a-f0-9]{64}$'
+            example: sha256=5f70bf18a08660b9e258d4a39fd95a77394f5dcf5f2a6f4f1d64a95e31d69f20
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/WebhookPriceDropPayload'
+            example:
+              event: price_drop
+              timestamp: '2026-04-21T12:00:00.000Z'
+              matches:
+                - subscription_id: 0398df6f-af27-4b1b-8f7f-a2bc56f039f3
+                  origin: MSP
+                  destination: SEA
+                  departure_date: '2026-05-15'
+                  accommodation: roomette
+                  price: 425
+                  previous_price: 510
+                  threshold: 500
+      responses:
+        '2XX':
+          description: Delivery acknowledged by receiver.
+        default:
+          description: Non-2xx response. RailForLess will retry delivery with bounded attempts.
+
+components:
+  securitySchemes:
+    API Key Auth:
+      type: apiKey
+      in: header
+      name: x-api-key
+      description: API key required for authentication. Email info@railforless.us to obtain an API key.
+
+  responses:
+    BadRequestError:
+      description: Validation failed.
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorResponse'
+          example:
+            error: validation_error
+            message: Request validation failed.
+    UnauthorizedError:
+      description: Missing or invalid API key.
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorResponse'
+          example:
+            error: unauthorized
+            message: Missing or invalid API key.
+    NotFoundError:
+      description: Requested resource was not found.
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorResponse'
+          example:
+            error: not_found
+            message: Subscription group was not found.
+    RateLimitError:
+      description: Request was rate-limited for this API key.
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorResponse'
+          example:
+            error: rate_limited
+            message: Too many requests for this API key.
+
+  schemas:
+    AccommodationKind:
+      type: string
+      enum:
+        - coach
+        - business
+        - roomette
+        - bedroom
+        - family_room
+
+    StationCode:
+      type: string
+      description: Amtrak station code.
+      pattern: '^[A-Z]{3}$'
+      minLength: 3
+      maxLength: 3
+      example: MSP
+
+    SubscriptionGroupCreateRequest:
+      type: object
+      required:
+        - origin
+        - destination
+        - accommodation
+        - price_threshold
+        - start_date
+        - webhook_url
+      properties:
+        origin:
+          $ref: '#/components/schemas/StationCode'
+        destination:
+          $ref: '#/components/schemas/StationCode'
+        accommodation:
+          $ref: '#/components/schemas/AccommodationKind'
+        price_threshold:
+          type: number
+          exclusiveMinimum: 0
+          description: Notify when price is less than or equal to this USD threshold.
+          example: 500
+        start_date:
+          type: string
+          format: date
+          description: Must be today or later.
+          example: '2026-05-15'
+        end_date:
+          type: string
+          format: date
+          description: Optional. Must be greater than or equal to `start_date`; inclusive range length must not exceed 31 days.
+          example: '2026-05-21'
+        webhook_url:
+          type: string
+          format: uri
+          description: Destination URL for webhook deliveries.
+          example: https://example.com/hook
+
+    SubscriptionGroupUpdateRequest:
+      type: object
+      minProperties: 1
+      description: Any create-request fields may be sent. If any trip field (`origin`, `destination`, `accommodation`, `price_threshold`, `start_date`, `end_date`) is present, subscriptions are regenerated from merged values.
+      properties:
+        origin:
+          $ref: '#/components/schemas/StationCode'
+        destination:
+          $ref: '#/components/schemas/StationCode'
+        accommodation:
+          $ref: '#/components/schemas/AccommodationKind'
+        price_threshold:
+          type: number
+          exclusiveMinimum: 0
+          example: 500
+        start_date:
+          type: string
+          format: date
+          example: '2026-05-15'
+        end_date:
+          type: string
+          format: date
+          example: '2026-05-21'
+        webhook_url:
+          type: string
+          format: uri
+          example: https://example.com/hook
+
+    Subscription:
+      type: object
+      required:
+        - id
+        - group_id
+        - origin
+        - destination
+        - departure_date
+        - accommodation
+        - price_threshold
+        - last_notified_price
+        - last_checked_at
+        - created_at
+      properties:
+        id:
+          type: string
+          format: uuid
+        group_id:
+          type: string
+          format: uuid
+        origin:
+          $ref: '#/components/schemas/StationCode'
+        destination:
+          $ref: '#/components/schemas/StationCode'
+        departure_date:
+          type: string
+          format: date
+          example: '2026-05-15'
+        accommodation:
+          $ref: '#/components/schemas/AccommodationKind'
+        price_threshold:
+          type: number
+          example: 500
+        last_notified_price:
+          type:
+            - 'null'
+            - number
+          description: Last price that triggered a notification. Null before first notification.
+          example: null
+        last_checked_at:
+          type: string
+          format: date-time
+          example: '2026-04-21T12:15:00.000Z'
+        created_at:
+          type: string
+          format: date-time
+          example: '2026-04-21T12:00:00.000Z'
+
+    SubscriptionGroup:
+      type: object
+      required:
+        - id
+        - webhook_url
+        - created_at
+        - subscriptions
+      properties:
+        id:
+          type: string
+          format: uuid
+        webhook_url:
+          type: string
+          format: uri
+          example: https://example.com/hook
+        created_at:
+          type: string
+          format: date-time
+          example: '2026-04-21T12:00:00.000Z'
+        subscriptions:
+          type: array
+          items:
+            $ref: '#/components/schemas/Subscription'
+
+    CreateSubscriptionGroupResponse:
+      type: object
+      required:
+        - id
+        - webhook_secret
+        - subscriptions
+      properties:
+        id:
+          type: string
+          format: uuid
+        webhook_secret:
+          type: string
+          description: One-time secret used to verify webhook signatures.
+          pattern: '^[a-f0-9]{64}$'
+        subscriptions:
+          type: integer
+          minimum: 1
+          maximum: 31
+          description: Number of fanned-out per-day subscriptions created.
+
+    UpdateSubscriptionGroupResponse:
+      type: object
+      required:
+        - id
+        - updated
+      properties:
+        id:
+          type: string
+          format: uuid
+        updated:
+          type: boolean
+          enum: [true]
+
+    DeleteSubscriptionGroupResponse:
+      type: object
+      required:
+        - deleted
+      properties:
+        deleted:
+          type: boolean
+          enum: [true]
+
+    WebhookPriceDropPayload:
+      type: object
+      required:
+        - event
+        - timestamp
+        - matches
+      properties:
+        event:
+          type: string
+          enum: [price_drop]
+        timestamp:
+          type: string
+          format: date-time
+          example: '2026-04-21T12:00:00.000Z'
+        matches:
+          type: array
+          minItems: 1
+          items:
+            $ref: '#/components/schemas/WebhookPriceDropMatch'
+
+    WebhookPriceDropMatch:
+      type: object
+      required:
+        - subscription_id
+        - origin
+        - destination
+        - departure_date
+        - accommodation
+        - price
+        - previous_price
+        - threshold
+      properties:
+        subscription_id:
+          type: string
+          format: uuid
+        origin:
+          $ref: '#/components/schemas/StationCode'
+        destination:
+          $ref: '#/components/schemas/StationCode'
+        departure_date:
+          type: string
+          format: date
+          example: '2026-05-15'
+        accommodation:
+          $ref: '#/components/schemas/AccommodationKind'
+        price:
+          type: number
+          format: float
+          example: 425
+        previous_price:
+          type:
+            - 'null'
+            - number
+          format: float
+          description: Null on the first notification for a subscription.
+          example: null
+        threshold:
+          type: number
+          format: float
+          example: 500
+
+    ErrorResponse:
+      type: object
+      required:
+        - error
+        - message
+      properties:
+        error:
+          type: string
+          example: validation_error
+        message:
+          type: string
+          example: Request validation failed.
