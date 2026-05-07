@@ -237,34 +237,11 @@ paths:
                     error:
                       message: "SOLD OUT"
         '400':
-          description: Bad Request - The request parameters were invalid.
-          content:
-            application/json:
-              schema:
-                type: array
-                items:
-                  type: object
-                  properties:
-                    code:
-                      type: string
-                      description: Error code identifying the type of validation error
-                    message:
-                      type: string
-                      description: Human-readable error message
-                    path:
-                      type: array
-                      items:
-                        type: string
-                      description: Array indicating which field(s) caused the error
-                  required:
-                    - code
-                    - message
-                    - path
-              example:
-                - code: "custom"
-                  message: "Invalid origin"
-                  path:
-                    - "origin"
+          $ref: '#/components/responses/BadRequestError'
+        '401':
+          $ref: '#/components/responses/UnauthorizedError'
+        '429':
+          $ref: '#/components/responses/RateLimitError'
         '500':
           description: Internal Server Error - An unexpected error occurred on the server.
           content:
@@ -358,6 +335,8 @@ paths:
                       created_at: '2026-04-21T12:00:00.000Z'
         '401':
           $ref: '#/components/responses/UnauthorizedError'
+        '429':
+          $ref: '#/components/responses/RateLimitError'
 
   /v1/subscriptions/{groupId}:
     description: All subscription endpoints require the `x-api-key` header and are rate-limited per API key.
@@ -400,6 +379,8 @@ paths:
           $ref: '#/components/responses/UnauthorizedError'
         '404':
           $ref: '#/components/responses/NotFoundError'
+        '429':
+          $ref: '#/components/responses/RateLimitError'
 
     delete:
       summary: Delete a webhook subscription group
@@ -428,6 +409,8 @@ paths:
           $ref: '#/components/responses/UnauthorizedError'
         '404':
           $ref: '#/components/responses/NotFoundError'
+        '429':
+          $ref: '#/components/responses/RateLimitError'
 
 webhooks:
   price_drop:
@@ -443,7 +426,7 @@ webhooks:
 
         Delivery semantics:
         - Any 2xx response acknowledges delivery.
-        - Non-2xx responses are retried with bounded attempts.
+        - Non-2xx responses are retried with exponential backoff.
         - Multiple matches may be batched in one delivery per group per cycle.
         - Delivery cycles run every 15 minutes (frequent tier) and daily at 01:00 UTC (daily tier).
       operationId: receivePriceDropWebhook
@@ -492,7 +475,7 @@ webhooks:
         '2XX':
           description: Delivery acknowledged by receiver.
         default:
-          description: Non-2xx response. RailForLess will retry delivery with bounded attempts.
+          description: Non-2xx response. RailForLess will retry delivery with exponential backoff.
 
 components:
   securitySchemes:
@@ -508,10 +491,15 @@ components:
       content:
         application/json:
           schema:
-            $ref: '#/components/schemas/ErrorResponse'
+            $ref: '#/components/schemas/ValidationErrorResponse'
           example:
             error: validation_error
             message: Request validation failed.
+            issues:
+              - code: custom
+                message: Invalid origin
+                path:
+                  - origin
     UnauthorizedError:
       description: Missing or invalid API key.
       content:
@@ -806,7 +794,42 @@ components:
       properties:
         error:
           type: string
-          example: validation_error
+          description: Machine-readable error code.
+          example: unauthorized
         message:
           type: string
-          example: Request validation failed.
+          description: Human-readable error message.
+          example: Missing or invalid API key.
+
+    ValidationErrorResponse:
+      allOf:
+        - $ref: '#/components/schemas/ErrorResponse'
+        - type: object
+          required:
+            - issues
+          properties:
+            issues:
+              type: array
+              description: Array of validation issues. Each entry identifies a field-level error.
+              items:
+                type: object
+                required:
+                  - code
+                  - message
+                  - path
+                properties:
+                  code:
+                    type: string
+                    description: Validation issue code.
+                    example: custom
+                  message:
+                    type: string
+                    description: Human-readable issue message.
+                    example: Invalid origin
+                  path:
+                    type: array
+                    description: Path of fields identifying which input caused the issue.
+                    items:
+                      type: string
+                    example:
+                      - origin
